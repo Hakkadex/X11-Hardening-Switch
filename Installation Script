@@ -1,0 +1,79 @@
+#!/bin/bash
+# Self-executing X11 harden/unharden toggle script
+# Because sometimes you wanna lock it down, and sometimes you wanna play with fire.
+
+set -e
+
+USER_HOME=$(eval echo ~${SUDO_USER})
+XAUTH_FILE="${USER_HOME}/.Xauthority"
+XWRAPPER="/etc/X11/Xwrapper.config"
+XSERVERRC="/etc/X11/xinit/xserverrc"
+XHOST_SCRIPT="${USER_HOME}/.xhost_secure.sh"
+STARTX="/usr/bin/startx"
+STARTX_BAK="/usr/bin/startx.bak"
+
+# Function: Harden X11
+harden_x11() {
+    echo "[+] HARDENING X11..."
+
+    echo "[*] Disabling TCP listening..."
+    mkdir -p /etc/X11
+    echo "allowed_users=console" > "$XWRAPPER"
+
+    echo 'exec X -nolisten tcp "$@"' > "$XSERVERRC"
+
+    echo "[*] Locking down xhost..."
+    cat <<EOF > "$XHOST_SCRIPT"
+#!/bin/bash
+xhost -
+xhost +SI:localuser:\$USER
+EOF
+    chmod +x "$XHOST_SCRIPT"
+
+    echo "[*] Locking down .Xauthority..."
+    [ -f "$XAUTH_FILE" ] && chmod 600 "$XAUTH_FILE" && chown ${SUDO_USER}:${SUDO_USER} "$XAUTH_FILE"
+    chmod 700 "$USER_HOME"
+
+    echo "[*] Patching /usr/bin/startx..."
+    if [ ! -f "$STARTX_BAK" ]; then
+        cp "$STARTX" "$STARTX_BAK"
+    fi
+    sed -i 's/^\(defaultserverargs=.*\)/\1 -nolisten tcp/' "$STARTX"
+
+    echo "[✓] X11 is now hardened. Don’t say I didn’t warn you."
+}
+
+# Function: Unharden X11
+unharden_x11() {
+    echo "[+] UNHARDENING X11..."
+
+    echo "[*] Re-enabling TCP in configs..."
+    sed -i '/^allowed_users=console$/d' "$XWRAPPER" || true
+    sed -i '/-nolisten tcp/d' "$XSERVERRC" || true
+
+    echo "[*] Restoring startx..."
+    if [ -f "$STARTX_BAK" ]; then
+        mv "$STARTX_BAK" "$STARTX"
+        chmod +x "$STARTX"
+    else
+        echo "[!] No startx backup found."
+    fi
+
+    echo "[*] Removing xhost lockdown script..."
+    rm -f "$XHOST_SCRIPT"
+
+    echo "[*] Resetting .Xauthority permissions..."
+    [ -f "$XAUTH_FILE" ] && chmod 644 "$XAUTH_FILE" && chown ${SUDO_USER}:${SUDO_USER} "$XAUTH_FILE"
+    chmod 755 "$USER_HOME"
+
+    echo "[✓] X11 has been unshackled. May God have mercy."
+}
+
+# Check if hardened (by presence of xhost script and nolisten in xserverrc)
+if grep -q '\-nolisten tcp' "$XSERVERRC" && [ -f "$XHOST_SCRIPT" ]; then
+    echo "[*] X11 appears to be hardened. Flipping to unsecure mode..."
+    unharden_x11
+else
+    echo "[*] X11 is currently loose. Locking it down..."
+    harden_x11
+fi
