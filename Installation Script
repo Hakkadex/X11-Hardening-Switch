@@ -1,4 +1,11 @@
 #!/bin/bash
+set -euo pipefail
+
+VERBOSE=true  # Set to false to shut it up
+
+log() {
+    [[ "$VERBOSE" == true ]] && echo -e "\033[1;32m[INFO]\033[0m $*"
+}
 # Self-executing X11 harden/unharden toggle script
 # Because sometimes you wanna lock it down, and sometimes you wanna play with fire.
 
